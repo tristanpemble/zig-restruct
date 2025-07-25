@@ -88,32 +88,32 @@ pub fn ResizableStruct(comptime Layout: type) type {
             const Field = @FieldType(Layout, @tagName(field));
             break :blk if (isResizableArray(Field)) []Field.Element else *Field;
         } {
-            const start = self.offsetOf(field);
-            const end = start + self.sizeOf(field);
+            const start = offsetOf(self.lens, field);
+            const end = start + sizeOf(self.lens, field);
             const bytes = self.ptr[start..end];
 
             return @ptrCast(@alignCast(bytes));
         }
 
         /// Returns the byte offset of the given field.
-        fn offsetOf(self: *const Self, comptime field: FieldEnum(Layout)) usize {
+        fn offsetOf(lens: Lengths, comptime field: FieldEnum(Layout)) usize {
             var offset: usize = 0;
             inline for (@typeInfo(Layout).@"struct".fields) |f| {
                 const tag = @field(FieldEnum(Layout), f.name);
                 if (tag == field) {
                     return offset;
                 } else {
-                    offset += self.sizeOf(tag);
+                    offset += sizeOf(lens, tag);
                 }
             }
             unreachable;
         }
 
         /// Returns the byte size of the given field, calculating the size of `ResizableArray` fields using their length.
-        fn sizeOf(self: *const Self, comptime field: FieldEnum(Layout)) usize {
+        fn sizeOf(lens: Lengths, comptime field: FieldEnum(Layout)) usize {
             const Field = @FieldType(Layout, @tagName(field));
             if (comptime isResizableArray(Field)) {
-                return @sizeOf(Field.Element) * @field(self.lens, @tagName(field));
+                return @sizeOf(Field.Element) * @field(lens, @tagName(field));
             } else {
                 return @sizeOf(Field);
             }
