@@ -1,0 +1,236 @@
+pub fn DynamicArray(comptime T: type) type {
+    return struct {
+        pub const Element = T;
+    };
+}
+
+fn isDynamicArray(comptime T: type) bool {
+    return @hasDecl(T, "Element") and T == DynamicArray(T.Element);
+}
+
+/// A heap allocated type that can contain any number of `DynamicArray`s.
+pub fn DynamicallySizedType(comptime Layout: type) type {
+    return struct {
+        const Self = @This();
+
+        const Alignment = blk: {
+            var alignment = 0;
+            for (@typeInfo(Layout).@"struct".fields) |field| {
+                const tag = @field(FieldEnum(Layout), field.name);
+                alignment = @max(alignment, alignOf(tag));
+            }
+            break :blk alignment;
+        };
+
+        pub const Lengths = blk: {
+            var count = 0;
+            for (@typeInfo(Layout).@"struct".fields) |field| {
+                if (isDynamicArray(field.type)) {
+                    count += 1;
+                }
+            }
+            break :blk Tuple(&@as([count]type, @splat(usize)));
+        };
+
+        ptr: [*]align(Alignment) u8,
+        lens: Lengths,
+
+        /// Initializes a new instance of the struct with the given lengths for its dynamic arrays.
+        pub fn init(allocator: Allocator, lens: Lengths) Oom!Self {
+            const size = calcSize(lens);
+            const bytes = try allocator.alignedAlloc(u8, Alignment, size);
+
+            return Self{ .ptr = bytes.ptr, .lens = lens };
+        }
+
+        pub fn deinit(self: *Self, allocator: Allocator) void {
+            allocator.free(self.ptr[0..calcSize(self.lens)]);
+        }
+
+        /// Returns a pointer to the given field. If the field is a dynamic array, returns a slice of elements.
+        pub fn get(self: *Self, comptime field: FieldEnum(Layout)) blk: {
+            const Field = @FieldType(Layout, @tagName(field));
+            break :blk if (isDynamicArray(Field)) []Field.Element else *Field;
+        } {
+            const start = self.offsetOf(field);
+            const end = start + self.sizeOf(field);
+            const bytes = self.ptr[start..end];
+
+            return @ptrCast(@alignCast(bytes));
+        }
+
+        /// Returns a const pointer to the given field. If the field is a dynamic array, returns a const slice of elements.
+        pub fn getConst(self: *const Self, comptime field: FieldEnum(Layout)) blk: {
+            const Field = @FieldType(Layout, @tagName(field));
+            break :blk if (isDynamicArray(Field)) []const Field.Element else *const Field;
+        } {
+            const start = self.offsetOf(field);
+            const end = start + self.sizeOf(field);
+            const bytes = self.ptr[start..end];
+
+            return @ptrCast(@alignCast(bytes));
+        }
+
+        /// Returns the byte offset of the given field.
+        pub fn offsetOf(self: *const Self, comptime field: FieldEnum(Layout)) usize {
+            var offset: usize = 0;
+            inline for (@typeInfo(Layout).@"struct".fields) |f| {
+                const tag = @field(FieldEnum(Layout), f.name);
+                if (tag == field) {
+                    return offset;
+                } else {
+                    offset += self.sizeOf(tag);
+                }
+            }
+            unreachable;
+        }
+
+        /// Returns the byte size of the given field, calculating the size of dynamic arrays using their length.
+        pub fn sizeOf(self: *const Self, comptime field: FieldEnum(Layout)) usize {
+            const Field = @FieldType(Layout, @tagName(field));
+            if (comptime isDynamicArray(Field)) {
+                return @sizeOf(Field.Element) * self.lens[comptime lensIndex(field)];
+            } else {
+                return @sizeOf(Field);
+            }
+        }
+
+        /// Returns the byte alignment of the given field.
+        pub fn alignOf(comptime field: FieldEnum(Layout)) usize {
+            const Field = @FieldType(Layout, @tagName(field));
+            if (comptime isDynamicArray(Field)) {
+                return @alignOf(Field.Element);
+            } else {
+                return @alignOf(Field);
+            }
+        }
+
+        /// Calculate the byte size of this struct given the lengths of its dynamic arrays.
+        fn calcSize(lens: Lengths) usize {
+            var size: usize = 0;
+            inline for (@typeInfo(Layout).@"struct".fields) |f| {
+                const tag = @field(FieldEnum(Layout), f.name);
+                const len = if (comptime isDynamicArray(f.type)) lens[comptime lensIndex(tag)] else 1;
+                size += fieldElemSize(tag) * len;
+            }
+            return size;
+        }
+
+        /// Returns the index of the given field in the `Lengths` tuple. The field must be a dynamic array.
+        fn lensIndex(comptime field: FieldEnum(Layout)) usize {
+            comptime {
+                const Field = @FieldType(Layout, @tagName(field));
+                assert(isDynamicArray(Field));
+
+                var i = 0;
+                for (@typeInfo(Layout).@"struct".fields) |f| {
+                    const tag = @field(FieldEnum(Layout), f.name);
+                    if (tag == field) {
+                        return i;
+                    } else if (isDynamicArray(f.type)) {
+                        i += 1;
+                    }
+                }
+                unreachable;
+            }
+        }
+
+        /// Returns the size of the given field, or if it is a dynamic array, the size of its element.
+        fn fieldElemSize(comptime field: FieldEnum(Layout)) usize {
+            const Field = @FieldType(Layout, @tagName(field));
+            if (comptime isDynamicArray(Field)) {
+                return @sizeOf(Field.Element);
+            } else {
+                return @sizeOf(Field);
+            }
+        }
+    };
+}
+
+test "manually created" {
+    const Head = struct {
+        head_val: u32,
+    };
+    const Middle = struct {
+        middle_val: u32,
+    };
+    const Tail = struct {
+        tail_val: u32,
+    };
+    const MyType = DynamicallySizedType(struct {
+        head: Head,
+        first: DynamicArray(u32),
+        middle: Middle,
+        second: DynamicArray(u8),
+        tail: Tail,
+    });
+
+    const my_type = MyType{
+        .ptr = @ptrCast(@constCast(&[_]u32{
+            0xAA,
+            0xC0FFEE,
+            0xBEEF,
+            0xBB,
+            std.mem.bigToNative(u32, 0xC0DED00D),
+            0xCC,
+        })),
+        .lens = .{ 2, 4 },
+    };
+
+    try testing.expectEqualDeep(&Head{ .head_val = 0xAA }, my_type.getConst(.head));
+    try testing.expectEqualSlices(u32, &.{ 0xC0FFEE, 0xBEEF }, my_type.getConst(.first));
+    try testing.expectEqualDeep(&Middle{ .middle_val = 0xBB }, my_type.getConst(.middle));
+    try testing.expectEqualSlices(u8, &.{ 0xC0, 0xDE, 0xD0, 0x0D }, my_type.getConst(.second));
+    try testing.expectEqualDeep(&Tail{ .tail_val = 0xCC }, my_type.getConst(.tail));
+}
+
+test "allocated" {
+    const Head = struct {
+        head_val: u32,
+    };
+    const Middle = struct {
+        middle_val: u32,
+    };
+    const Tail = struct {
+        tail_val: u32,
+    };
+    const MyType = DynamicallySizedType(struct {
+        head: Head,
+        first: DynamicArray(u32),
+        middle: Middle,
+        second: DynamicArray(u8),
+        tail: Tail,
+    });
+
+    var my_type = try MyType.init(testing.allocator, .{ 2, 4 });
+    defer my_type.deinit(testing.allocator);
+
+    const head = my_type.get(.head);
+    head.* = Head{ .head_val = 0xAA };
+    var first = my_type.get(.first);
+    first[0] = 0xC0FFEE;
+    first[1] = 0xBEEF;
+    const middle = my_type.get(.middle);
+    middle.* = Middle{ .middle_val = 0xBB };
+    var second = my_type.get(.second);
+    second[0] = 0xC0;
+    second[1] = 0xDE;
+    second[2] = 0xD0;
+    second[3] = 0x0D;
+    const tail = my_type.get(.tail);
+    tail.* = Tail{ .tail_val = 0xCC };
+
+    try testing.expectEqualDeep(&Head{ .head_val = 0xAA }, my_type.getConst(.head));
+    try testing.expectEqualSlices(u32, &.{ 0xC0FFEE, 0xBEEF }, my_type.getConst(.first));
+    try testing.expectEqualDeep(&Middle{ .middle_val = 0xBB }, my_type.getConst(.middle));
+    try testing.expectEqualSlices(u8, &.{ 0xC0, 0xDE, 0xD0, 0x0D }, my_type.getConst(.second));
+    try testing.expectEqualDeep(&Tail{ .tail_val = 0xCC }, my_type.getConst(.tail));
+}
+
+const std = @import("std");
+const Allocator = std.mem.Allocator;
+const assert = std.debug.assert;
+const FieldEnum = std.meta.FieldEnum;
+const Oom = std.mem.Allocator.Error;
+const testing = std.testing;
+const Tuple = std.meta.Tuple;
