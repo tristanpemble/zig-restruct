@@ -1,7 +1,7 @@
 .{
-    .name = .zig_dst,
+    .name = .restruct,
     .version = "0.0.0",
-    .fingerprint = 0x5e5746cca838e2cd,
+    .fingerprint = 0x59895c4bdcc4dbde,
     .minimum_zig_version = "0.14.1",
 
     .dependencies = .{},

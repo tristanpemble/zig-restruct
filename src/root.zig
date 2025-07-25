@@ -1,17 +1,19 @@
-/// This type is zero sized and has no methods. It exists as an API for `DynamicallySizedType`,
-/// indicating which fields are dynamically sized.
-pub fn DynamicArray(comptime T: type) type {
+/// This type is zero sized and has no methods. It exists as an API for `ResizableStruct`,
+/// indicating which fields are runtime sized arrays of elements.
+pub fn ResizableArray(comptime T: type) type {
     return struct {
         pub const Element = T;
     };
 }
 
-fn isDynamicArray(comptime T: type) bool {
-    return @hasDecl(T, "Element") and T == DynamicArray(T.Element);
+fn isResizableArray(comptime T: type) bool {
+    return @hasDecl(T, "Element") and T == ResizableArray(T.Element);
 }
 
-/// A heap allocated type that can contain any number of `DynamicArray`s.
-pub fn DynamicallySizedType(comptime Layout: type) type {
+/// A heap allocated type that can be sized at runtime to contain any number of `ResizableArray`s.
+///
+/// Internally, it is represented as a pointer and a set of lengths for each `ResizableArray` field.
+pub fn ResizableStruct(comptime Layout: type) type {
     return struct {
         const Self = @This();
 
@@ -24,11 +26,12 @@ pub fn DynamicallySizedType(comptime Layout: type) type {
             break :blk alignment;
         };
 
+        /// A comptime generated struct type containing `usize` length fields for each `ResizableArray` field of `Layout`.
         pub const Lengths = blk: {
             var fields: [@typeInfo(Layout).@"struct".fields.len]StructField = undefined;
             var i: usize = 0;
             for (@typeInfo(Layout).@"struct".fields) |field| {
-                if (isDynamicArray(field.type)) {
+                if (isResizableArray(field.type)) {
                     fields[i] = .{
                         .name = field.name,
                         .type = usize,
@@ -49,10 +52,13 @@ pub fn DynamicallySizedType(comptime Layout: type) type {
             });
         };
 
+        /// The pointer to the struct's data.
         ptr: [*]align(Alignment) u8,
+
+        /// The length of each `ResizableArray` field.
         lens: Lengths,
 
-        /// Initializes a new instance of the struct with the given lengths for its dynamic arrays.
+        /// Initializes a new instance of the struct with the given lengths for its `ResizableArray` fields.
         pub fn init(allocator: Allocator, lens: Lengths) Oom!Self {
             const size = calcSize(lens);
             const bytes = try allocator.alignedAlloc(u8, Alignment, size);
@@ -65,10 +71,22 @@ pub fn DynamicallySizedType(comptime Layout: type) type {
             self.* = undefined;
         }
 
-        /// Returns a pointer to the given field. If the field is a dynamic array, returns a slice of elements.
+        pub fn resize(self: *Self, allocator: Allocator, new_lens: Lengths) Oom!void {
+            _ = self; // autofix
+            _ = allocator; // autofix
+            _ = new_lens; // autofix
+        }
+
+        pub fn remap(self: *Self, allocator: Allocator, new_lens: Lengths) Oom!void {
+            _ = self; // autofix
+            _ = allocator; // autofix
+            _ = new_lens; // autofix
+        }
+
+        /// Returns a pointer to the given field. If the field is a `ResizableArray`, returns a slice of elements.
         pub fn get(self: Self, comptime field: FieldEnum(Layout)) blk: {
             const Field = @FieldType(Layout, @tagName(field));
-            break :blk if (isDynamicArray(Field)) []Field.Element else *Field;
+            break :blk if (isResizableArray(Field)) []Field.Element else *Field;
         } {
             const start = self.offsetOf(field);
             const end = start + self.sizeOf(field);
@@ -77,10 +95,10 @@ pub fn DynamicallySizedType(comptime Layout: type) type {
             return @ptrCast(@alignCast(bytes));
         }
 
-        /// Returns a const pointer to the given field. If the field is a dynamic array, returns a const slice of elements.
+        /// Returns a const pointer to the given field. If the field is a `ResizableArray`, returns a const slice of elements.
         pub fn getConst(self: *const Self, comptime field: FieldEnum(Layout)) blk: {
             const Field = @FieldType(Layout, @tagName(field));
-            break :blk if (isDynamicArray(Field)) []const Field.Element else *const Field;
+            break :blk if (isResizableArray(Field)) []const Field.Element else *const Field;
         } {
             const start = self.offsetOf(field);
             const end = start + self.sizeOf(field);
@@ -103,10 +121,10 @@ pub fn DynamicallySizedType(comptime Layout: type) type {
             unreachable;
         }
 
-        /// Returns the byte size of the given field, calculating the size of dynamic arrays using their length.
+        /// Returns the byte size of the given field, calculating the size of `ResizableArray` fields using their length.
         pub fn sizeOf(self: *const Self, comptime field: FieldEnum(Layout)) usize {
             const Field = @FieldType(Layout, @tagName(field));
-            if (comptime isDynamicArray(Field)) {
+            if (comptime isResizableArray(Field)) {
                 return @sizeOf(Field.Element) * @field(self.lens, @tagName(field));
             } else {
                 return @sizeOf(Field);
@@ -116,18 +134,18 @@ pub fn DynamicallySizedType(comptime Layout: type) type {
         /// Returns the byte alignment of the given field.
         fn alignOf(comptime field: FieldEnum(Layout)) usize {
             const Field = @FieldType(Layout, @tagName(field));
-            if (comptime isDynamicArray(Field)) {
+            if (comptime isResizableArray(Field)) {
                 return @alignOf(Field.Element);
             } else {
                 return @alignOf(Field);
             }
         }
 
-        /// Calculate the byte size of this struct given the lengths of its dynamic arrays.
+        /// Calculate the byte size of this struct given the lengths of its `ResizableArray` fields.
         fn calcSize(lens: Lengths) usize {
             var size: usize = 0;
             inline for (@typeInfo(Layout).@"struct".fields) |f| {
-                if (comptime isDynamicArray(f.type)) {
+                if (comptime isResizableArray(f.type)) {
                     size += @sizeOf(f.type.Element) * @field(lens, f.name);
                 } else {
                     size += @sizeOf(f.type);
@@ -148,11 +166,11 @@ test "manually created" {
     const Tail = struct {
         tail_val: u32,
     };
-    const MyType = DynamicallySizedType(struct {
+    const MyType = ResizableStruct(struct {
         head: Head,
-        first: DynamicArray(u32),
+        first: ResizableArray(u32),
         middle: Middle,
-        second: DynamicArray(u8),
+        second: ResizableArray(u8),
         tail: Tail,
     });
 
@@ -188,11 +206,11 @@ test "allocated" {
     const Tail = struct {
         tail_val: u32,
     };
-    const MyType = DynamicallySizedType(struct {
+    const MyType = ResizableStruct(struct {
         head: Head,
-        first: DynamicArray(u32),
+        first: ResizableArray(u32),
         middle: Middle,
-        second: DynamicArray(u8),
+        second: ResizableArray(u8),
         tail: Tail,
     });
 
