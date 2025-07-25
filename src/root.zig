@@ -1,3 +1,5 @@
+/// This type is zero sized and has no methods. It exists as an API for `DynamicallySizedType`,
+/// indicating which fields are dynamically sized.
 pub fn DynamicArray(comptime T: type) type {
     return struct {
         pub const Element = T;
@@ -23,13 +25,28 @@ pub fn DynamicallySizedType(comptime Layout: type) type {
         };
 
         pub const Lengths = blk: {
-            var count = 0;
+            var fields: [@typeInfo(Layout).@"struct".fields.len]StructField = undefined;
+            var i: usize = 0;
             for (@typeInfo(Layout).@"struct".fields) |field| {
                 if (isDynamicArray(field.type)) {
-                    count += 1;
+                    fields[i] = .{
+                        .name = field.name,
+                        .type = usize,
+                        .default_value_ptr = @ptrCast(&@as(usize, 0)),
+                        .is_comptime = false,
+                        .alignment = @alignOf(usize),
+                    };
+                    i += 1;
                 }
             }
-            break :blk Tuple(&@as([count]type, @splat(usize)));
+            break :blk @Type(.{
+                .@"struct" = .{
+                    .layout = .auto,
+                    .fields = fields[0..i],
+                    .decls = &.{},
+                    .is_tuple = false,
+                },
+            });
         };
 
         ptr: [*]align(Alignment) u8,
@@ -45,10 +62,11 @@ pub fn DynamicallySizedType(comptime Layout: type) type {
 
         pub fn deinit(self: *Self, allocator: Allocator) void {
             allocator.free(self.ptr[0..calcSize(self.lens)]);
+            self.* = undefined;
         }
 
         /// Returns a pointer to the given field. If the field is a dynamic array, returns a slice of elements.
-        pub fn get(self: *Self, comptime field: FieldEnum(Layout)) blk: {
+        pub fn get(self: Self, comptime field: FieldEnum(Layout)) blk: {
             const Field = @FieldType(Layout, @tagName(field));
             break :blk if (isDynamicArray(Field)) []Field.Element else *Field;
         } {
@@ -89,14 +107,14 @@ pub fn DynamicallySizedType(comptime Layout: type) type {
         pub fn sizeOf(self: *const Self, comptime field: FieldEnum(Layout)) usize {
             const Field = @FieldType(Layout, @tagName(field));
             if (comptime isDynamicArray(Field)) {
-                return @sizeOf(Field.Element) * self.lens[comptime lensIndex(field)];
+                return @sizeOf(Field.Element) * @field(self.lens, @tagName(field));
             } else {
                 return @sizeOf(Field);
             }
         }
 
         /// Returns the byte alignment of the given field.
-        pub fn alignOf(comptime field: FieldEnum(Layout)) usize {
+        fn alignOf(comptime field: FieldEnum(Layout)) usize {
             const Field = @FieldType(Layout, @tagName(field));
             if (comptime isDynamicArray(Field)) {
                 return @alignOf(Field.Element);
@@ -109,40 +127,13 @@ pub fn DynamicallySizedType(comptime Layout: type) type {
         fn calcSize(lens: Lengths) usize {
             var size: usize = 0;
             inline for (@typeInfo(Layout).@"struct".fields) |f| {
-                const tag = @field(FieldEnum(Layout), f.name);
-                const len = if (comptime isDynamicArray(f.type)) lens[comptime lensIndex(tag)] else 1;
-                size += fieldElemSize(tag) * len;
+                if (comptime isDynamicArray(f.type)) {
+                    size += @sizeOf(f.type.Element) * @field(lens, f.name);
+                } else {
+                    size += @sizeOf(f.type);
+                }
             }
             return size;
-        }
-
-        /// Returns the index of the given field in the `Lengths` tuple. The field must be a dynamic array.
-        fn lensIndex(comptime field: FieldEnum(Layout)) usize {
-            comptime {
-                const Field = @FieldType(Layout, @tagName(field));
-                assert(isDynamicArray(Field));
-
-                var i = 0;
-                for (@typeInfo(Layout).@"struct".fields) |f| {
-                    const tag = @field(FieldEnum(Layout), f.name);
-                    if (tag == field) {
-                        return i;
-                    } else if (isDynamicArray(f.type)) {
-                        i += 1;
-                    }
-                }
-                unreachable;
-            }
-        }
-
-        /// Returns the size of the given field, or if it is a dynamic array, the size of its element.
-        fn fieldElemSize(comptime field: FieldEnum(Layout)) usize {
-            const Field = @FieldType(Layout, @tagName(field));
-            if (comptime isDynamicArray(Field)) {
-                return @sizeOf(Field.Element);
-            } else {
-                return @sizeOf(Field);
-            }
         }
     };
 }
@@ -174,7 +165,10 @@ test "manually created" {
             std.mem.bigToNative(u32, 0xC0DED00D),
             0xCC,
         })),
-        .lens = .{ 2, 4 },
+        .lens = .{
+            .first = 2,
+            .second = 4,
+        },
     };
 
     try testing.expectEqualDeep(&Head{ .head_val = 0xAA }, my_type.getConst(.head));
@@ -202,17 +196,20 @@ test "allocated" {
         tail: Tail,
     });
 
-    var my_type = try MyType.init(testing.allocator, .{ 2, 4 });
+    var my_type = try MyType.init(testing.allocator, .{
+        .first = 2,
+        .second = 4,
+    });
     defer my_type.deinit(testing.allocator);
 
     const head = my_type.get(.head);
     head.* = Head{ .head_val = 0xAA };
-    var first = my_type.get(.first);
+    const first = my_type.get(.first);
     first[0] = 0xC0FFEE;
     first[1] = 0xBEEF;
     const middle = my_type.get(.middle);
     middle.* = Middle{ .middle_val = 0xBB };
-    var second = my_type.get(.second);
+    const second = my_type.get(.second);
     second[0] = 0xC0;
     second[1] = 0xDE;
     second[2] = 0xD0;
@@ -229,8 +226,7 @@ test "allocated" {
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
-const assert = std.debug.assert;
 const FieldEnum = std.meta.FieldEnum;
 const Oom = std.mem.Allocator.Error;
+const StructField = std.builtin.Type.StructField;
 const testing = std.testing;
-const Tuple = std.meta.Tuple;
