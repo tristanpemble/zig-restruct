@@ -95,20 +95,8 @@ pub fn ResizableStruct(comptime Layout: type) type {
             return @ptrCast(@alignCast(bytes));
         }
 
-        /// Returns a const pointer to the given field. If the field is a `ResizableArray`, returns a const slice of elements.
-        pub fn getConst(self: *const Self, comptime field: FieldEnum(Layout)) blk: {
-            const Field = @FieldType(Layout, @tagName(field));
-            break :blk if (isResizableArray(Field)) []const Field.Element else *const Field;
-        } {
-            const start = self.offsetOf(field);
-            const end = start + self.sizeOf(field);
-            const bytes = self.ptr[start..end];
-
-            return @ptrCast(@alignCast(bytes));
-        }
-
         /// Returns the byte offset of the given field.
-        pub fn offsetOf(self: *const Self, comptime field: FieldEnum(Layout)) usize {
+        fn offsetOf(self: *const Self, comptime field: FieldEnum(Layout)) usize {
             var offset: usize = 0;
             inline for (@typeInfo(Layout).@"struct".fields) |f| {
                 const tag = @field(FieldEnum(Layout), f.name);
@@ -122,7 +110,7 @@ pub fn ResizableStruct(comptime Layout: type) type {
         }
 
         /// Returns the byte size of the given field, calculating the size of `ResizableArray` fields using their length.
-        pub fn sizeOf(self: *const Self, comptime field: FieldEnum(Layout)) usize {
+        fn sizeOf(self: *const Self, comptime field: FieldEnum(Layout)) usize {
             const Field = @FieldType(Layout, @tagName(field));
             if (comptime isResizableArray(Field)) {
                 return @sizeOf(Field.Element) * @field(self.lens, @tagName(field));
@@ -189,11 +177,11 @@ test "manually created" {
         },
     };
 
-    try testing.expectEqualDeep(&Head{ .head_val = 0xAA }, my_type.getConst(.head));
-    try testing.expectEqualSlices(u32, &.{ 0xC0FFEE, 0xBEEF }, my_type.getConst(.first));
-    try testing.expectEqualDeep(&Middle{ .middle_val = 0xBB }, my_type.getConst(.middle));
-    try testing.expectEqualSlices(u8, &.{ 0xC0, 0xDE, 0xD0, 0x0D }, my_type.getConst(.second));
-    try testing.expectEqualDeep(&Tail{ .tail_val = 0xCC }, my_type.getConst(.tail));
+    try testing.expectEqualDeep(&Head{ .head_val = 0xAA }, my_type.get(.head));
+    try testing.expectEqualSlices(u32, &.{ 0xC0FFEE, 0xBEEF }, my_type.get(.first));
+    try testing.expectEqualDeep(&Middle{ .middle_val = 0xBB }, my_type.get(.middle));
+    try testing.expectEqualSlices(u8, &.{ 0xC0, 0xDE, 0xD0, 0x0D }, my_type.get(.second));
+    try testing.expectEqualDeep(&Tail{ .tail_val = 0xCC }, my_type.get(.tail));
 }
 
 test "allocated" {
@@ -235,11 +223,11 @@ test "allocated" {
     const tail = my_type.get(.tail);
     tail.* = Tail{ .tail_val = 0xCC };
 
-    try testing.expectEqualDeep(&Head{ .head_val = 0xAA }, my_type.getConst(.head));
-    try testing.expectEqualSlices(u32, &.{ 0xC0FFEE, 0xBEEF }, my_type.getConst(.first));
-    try testing.expectEqualDeep(&Middle{ .middle_val = 0xBB }, my_type.getConst(.middle));
-    try testing.expectEqualSlices(u8, &.{ 0xC0, 0xDE, 0xD0, 0x0D }, my_type.getConst(.second));
-    try testing.expectEqualDeep(&Tail{ .tail_val = 0xCC }, my_type.getConst(.tail));
+    try testing.expectEqualDeep(&Head{ .head_val = 0xAA }, my_type.get(.head));
+    try testing.expectEqualSlices(u32, &.{ 0xC0FFEE, 0xBEEF }, my_type.get(.first));
+    try testing.expectEqualDeep(&Middle{ .middle_val = 0xBB }, my_type.get(.middle));
+    try testing.expectEqualSlices(u8, &.{ 0xC0, 0xDE, 0xD0, 0x0D }, my_type.get(.second));
+    try testing.expectEqualDeep(&Tail{ .tail_val = 0xCC }, my_type.get(.tail));
 }
 
 const std = @import("std");
