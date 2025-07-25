@@ -1,0 +1,30 @@
+name: Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    name: Test on Multiple Platforms
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        zig-version: [master, 0.14.1]
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Zig
+        uses: mlugg/setup-zig@v2
+
+      - name: Run tests
+        run: zig build test
+
+      - name: Build project
+        run: zig build --summary all
