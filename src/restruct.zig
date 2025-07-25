@@ -20,8 +20,7 @@ pub fn ResizableStruct(comptime Layout: type) type {
         const Alignment = blk: {
             var alignment = 0;
             for (@typeInfo(Layout).@"struct".fields) |field| {
-                const tag = @field(FieldEnum(Layout), field.name);
-                alignment = @max(alignment, alignOf(tag));
+                alignment = @max(alignment, alignOf(field.name));
             }
             break :blk alignment;
         };
@@ -58,7 +57,7 @@ pub fn ResizableStruct(comptime Layout: type) type {
         /// The length of each `ResizableArray` field.
         lens: Lengths,
 
-        /// Initializes a new instance of the struct with the given lengths for its `ResizableArray` fields.
+        /// Initializes a new instance of the struct with the given lengths of its `ResizableArray` fields.
         pub fn init(allocator: Allocator, lens: Lengths) Oom!Self {
             const size = calcSize(lens);
             const bytes = try allocator.alignedAlloc(u8, Alignment, size);
@@ -66,6 +65,7 @@ pub fn ResizableStruct(comptime Layout: type) type {
             return Self{ .ptr = bytes.ptr, .lens = lens };
         }
 
+        /// Deinitializes the struct, freeing its memory.
         pub fn deinit(self: *Self, allocator: Allocator) void {
             allocator.free(self.ptr[0..calcSize(self.lens)]);
             self.* = undefined;
@@ -88,40 +88,39 @@ pub fn ResizableStruct(comptime Layout: type) type {
             const Field = @FieldType(Layout, @tagName(field));
             break :blk if (isResizableArray(Field)) []Field.Element else *Field;
         } {
-            const start = offsetOf(self.lens, field);
-            const end = start + sizeOf(self.lens, field);
+            const start = offsetOf(self.lens, @tagName(field));
+            const end = start + sizeOf(self.lens, @tagName(field));
             const bytes = self.ptr[start..end];
 
             return @ptrCast(@alignCast(bytes));
         }
 
         /// Returns the byte offset of the given field.
-        fn offsetOf(lens: Lengths, comptime field: FieldEnum(Layout)) usize {
+        fn offsetOf(lens: Lengths, comptime field_name: []const u8) usize {
             var offset: usize = 0;
             inline for (@typeInfo(Layout).@"struct".fields) |f| {
-                const tag = @field(FieldEnum(Layout), f.name);
-                if (tag == field) {
+                if (comptime std.mem.eql(u8, f.name, field_name)) {
                     return offset;
                 } else {
-                    offset += sizeOf(lens, tag);
+                    offset += sizeOf(lens, f.name);
                 }
             }
             unreachable;
         }
 
         /// Returns the byte size of the given field, calculating the size of `ResizableArray` fields using their length.
-        fn sizeOf(lens: Lengths, comptime field: FieldEnum(Layout)) usize {
-            const Field = @FieldType(Layout, @tagName(field));
+        fn sizeOf(lens: Lengths, comptime field_name: []const u8) usize {
+            const Field = @FieldType(Layout, field_name);
             if (comptime isResizableArray(Field)) {
-                return @sizeOf(Field.Element) * @field(lens, @tagName(field));
+                return @sizeOf(Field.Element) * @field(lens, field_name);
             } else {
                 return @sizeOf(Field);
             }
         }
 
         /// Returns the byte alignment of the given field.
-        fn alignOf(comptime field: FieldEnum(Layout)) usize {
-            const Field = @FieldType(Layout, @tagName(field));
+        fn alignOf(comptime field: []const u8) usize {
+            const Field = @FieldType(Layout, field);
             if (comptime isResizableArray(Field)) {
                 return @alignOf(Field.Element);
             } else {
@@ -210,12 +209,12 @@ test "allocated" {
 
     const head = my_type.get(.head);
     head.* = Head{ .head_val = 0xAA };
-    const first = my_type.get(.first);
+    var first = my_type.get(.first);
     first[0] = 0xC0FFEE;
     first[1] = 0xBEEF;
     const middle = my_type.get(.middle);
     middle.* = Middle{ .middle_val = 0xBB };
-    const second = my_type.get(.second);
+    var second = my_type.get(.second);
     second[0] = 0xC0;
     second[1] = 0xDE;
     second[2] = 0xD0;
@@ -224,8 +223,10 @@ test "allocated" {
     tail.* = Tail{ .tail_val = 0xCC };
 
     try testing.expectEqualDeep(&Head{ .head_val = 0xAA }, my_type.get(.head));
+    try testing.expectEqual(2, my_type.get(.first).len);
     try testing.expectEqualSlices(u32, &.{ 0xC0FFEE, 0xBEEF }, my_type.get(.first));
     try testing.expectEqualDeep(&Middle{ .middle_val = 0xBB }, my_type.get(.middle));
+    try testing.expectEqual(4, my_type.get(.second).len);
     try testing.expectEqualSlices(u8, &.{ 0xC0, 0xDE, 0xD0, 0x0D }, my_type.get(.second));
     try testing.expectEqualDeep(&Tail{ .tail_val = 0xCC }, my_type.get(.tail));
 }
