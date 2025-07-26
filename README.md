@@ -2,6 +2,10 @@
 
 This library provides types for creating structs with runtime sized array fields.
 
+## Docs
+
+Documentation is hosted on GitHub pages: https://tristanpemble.github.io/zig-restruct/
+
 ## Usage
 
 To create a resizable struct, wrap your struct type with `ResizableStruct(T)`. Mark
