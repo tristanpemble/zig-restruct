@@ -23,6 +23,9 @@ pub fn ResizableStruct(comptime Layout: type) type {
         if (@typeInfo(Layout).@"struct".layout == .@"packed") {
             @compileError("Packed structs can not be used with `ResizableStruct`.");
         }
+        if (@typeInfo(Layout).@"struct".layout == .@"extern") {
+            @compileError("Extern structs can not be used with `ResizableStruct`.");
+        }
     }
 
     return struct {
@@ -262,70 +265,6 @@ test "allocated" {
     try testing.expectEqualSlices(u32, &.{ 0xC0FFEE, 0xBEEF }, my_type.get(.first));
     try testing.expectEqualDeep(&Middle{ .middle_val = 0xBB }, my_type.get(.middle));
     try testing.expectEqual(4, my_type.get(.second).len);
-    try testing.expectEqualSlices(u8, &.{ 0xC0, 0xDE, 0xD0, 0x0D }, my_type.get(.second));
-    try testing.expectEqualDeep(&Tail{ .tail_val = 0xCC }, my_type.get(.tail));
-
-    try my_type.resize(testing.allocator, .{
-        .first = 3,
-        .second = 5,
-    });
-
-    first = my_type.get(.first);
-    first[2] = 0xF00B42;
-    second = my_type.get(.second);
-    second[4] = 0x42;
-
-    try testing.expectEqualDeep(&Head{ .head_val = 0xAA }, my_type.get(.head));
-    try testing.expectEqual(3, my_type.get(.first).len);
-    try testing.expectEqualSlices(u32, &.{ 0xC0FFEE, 0xBEEF, 0xF00B42 }, my_type.get(.first));
-    try testing.expectEqualDeep(&Middle{ .middle_val = 0xBB }, my_type.get(.middle));
-    try testing.expectEqual(5, my_type.get(.second).len);
-    try testing.expectEqualSlices(u8, &.{ 0xC0, 0xDE, 0xD0, 0x0D, 0x42 }, my_type.get(.second));
-    try testing.expectEqualDeep(&Tail{ .tail_val = 0xCC }, my_type.get(.tail));
-}
-
-test "extern struct" {
-    const Head = extern struct {
-        head_val: u32,
-    };
-    const Middle = extern struct {
-        middle_val: u32,
-    };
-    const Tail = extern struct {
-        tail_val: u32,
-    };
-    const MyType = ResizableStruct(extern struct {
-        head: Head,
-        first: ResizableArray(u32),
-        middle: Middle,
-        second: ResizableArray(u8),
-        tail: Tail,
-    });
-
-    var my_type = try MyType.init(testing.allocator, .{
-        .first = 2,
-        .second = 4,
-    });
-    defer my_type.deinit(testing.allocator);
-
-    const head = my_type.get(.head);
-    head.* = Head{ .head_val = 0xAA };
-    var first = my_type.get(.first);
-    first[0] = 0xC0FFEE;
-    first[1] = 0xBEEF;
-    const middle = my_type.get(.middle);
-    middle.* = Middle{ .middle_val = 0xBB };
-    var second = my_type.get(.second);
-    second[0] = 0xC0;
-    second[1] = 0xDE;
-    second[2] = 0xD0;
-    second[3] = 0x0D;
-    const tail = my_type.get(.tail);
-    tail.* = Tail{ .tail_val = 0xCC };
-
-    try testing.expectEqualDeep(&Head{ .head_val = 0xAA }, my_type.get(.head));
-    try testing.expectEqualSlices(u32, &.{ 0xC0FFEE, 0xBEEF }, my_type.get(.first));
-    try testing.expectEqualDeep(&Middle{ .middle_val = 0xBB }, my_type.get(.middle));
     try testing.expectEqualSlices(u8, &.{ 0xC0, 0xDE, 0xD0, 0x0D }, my_type.get(.second));
     try testing.expectEqualDeep(&Tail{ .tail_val = 0xCC }, my_type.get(.tail));
 
