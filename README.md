@@ -38,7 +38,7 @@ try data.resize(allocator, .{ .items = 20, .extra = 2 });
 
 ## Acknowledgments
 
-Discussions with Andrew Kelley on the `#zig` IRC channel led to the design of this library.
+Discussions with &lt;triallax&gt; and &lt;andrewrk&gt; on the `#zig` IRC channel led to the design of this library.
 
 ## License
 
