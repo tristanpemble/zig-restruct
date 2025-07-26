@@ -1,3 +1,8 @@
+//! Structs with runtime-sized array fields.
+//!
+//! This module provides `ResizableStruct` for creating heap-allocated types that can be sized at runtime
+//! and `ResizableArray` for marking the fields on that struct that are variable-length arrays.
+
 /// This type is zero sized and has no methods. It exists as an API for `ResizableStruct`,
 /// indicating which fields are runtime sized arrays of elements.
 pub fn ResizableArray(comptime T: type) type {

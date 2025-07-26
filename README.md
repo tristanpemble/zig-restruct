@@ -1,63 +1,41 @@
 # zig-restruct
 
-Born from a conversation on the Zig IRC channel, this library is a proof of concept of a helper utility for runtime sized types and arrays in Zig.
+This library provides types for creating structs with runtime sized array fields.
 
 ## Usage
 
-This is a proof of concept so the API is bare right now, but the gist is there:
+To create a resizable struct, wrap your struct type with `ResizableStruct(T)`. Mark
+variable-length array fields using `ResizableArray(Elem)` - you can have multiple
+resizable arrays within a single struct, and they can be mixed with regular fixed-size
+wherever you want.
 
 ```zig
-const restruct = @import("restruct");
-const ResizableArray = restruct.ResizableArray;
-const ResizableStruct = restruct.ResizableStruct;
-
-// Declare some known-sized structs.
-const Head = struct {
-    head_val: u32,
-};
-
-const Middle = struct {
-    middle_val: u32,
-};
-
-const Tail = struct {
-    tail_val: u32,
-};
-
-// Combine them in a ResizableStruct with some ResizableArray(T) fields.
-const MyType = ResizableStruct(struct {
-    head: Head,
-    first: ResizableArray(u32),
-    middle: Middle,
-    second: ResizableArray(u8),
-    tail: Tail,
+const MyData = ResizableStruct(struct {
+    header: u32,                    // Fixed field
+    items: ResizableArray(u8),      // Variable-length array
+    middle: u32,
+    extra: ResizableArray(u16),     // Another variable-length array
+    footer: u32,                    // Another fixed field
 });
 
-// Allocate some memory by passing a struct of array lengths for all ResizableArray fields.
-var my_type = try MyType.init(testing.allocator, .{
-    .first = 2,
-    .second = 4,
-});
-defer my_type.deinit(testing.allocator);
+// Create with 10 items and 5 extra
+var data = try MyData.init(allocator, .{ .items = 10, .extra = 5 });
+defer data.deinit(allocator);
 
-// Get pointers to the fields in the struct.
-const head = my_type.get(.head);
-head.* = Head{ .head_val = 0xAA };
+// Access fields
+const header = data.get(.header);
+header.* = 0xFF;
+const items = data.get(.items);  // Returns []u8 slice
+items[0] = 42;
 
-const middle = my_type.get(.middle);
-middle.* = Middle{ .middle_val = 0xBB };
-
-const tail = my_type.get(.tail);
-tail.* = Tail{ .tail_val = 0xCC };
-
-// Get slices of the resizable arrays.
-var first = my_type.get(.first);
-first[0] = 0xC0FFEE;
-first[1] = 0xBEEF;
-
-var second = my_type.get(.second);
-second[0] = 0xC0;
-second[1] = 0xDE;
-second[2] = 0xD0;
-second[3] = 0x0D;
+// Grow items to 20 and shrink extra at the same time
+try data.resize(allocator, .{ .items = 20, .extra = 2 });
 ```
+
+## Acknowledgments
+
+Discussions with Andrew Kelley on the `#zig` IRC channel led to the design of this library.
+
+## License
+
+MIT
